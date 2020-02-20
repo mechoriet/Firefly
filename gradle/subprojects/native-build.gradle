@@ -1,0 +1,91 @@
+apply plugin: 'cpp'
+
+model {
+    platforms {
+        x64 {
+            architecture "x64"
+        }
+    }
+
+    components {
+        def jvmHome = org.gradle.internal.jvm.Jvm.current().javaHome
+        def baseFlags = [
+                '-Wall',
+                '-Werror',
+                '-Wno-error=unused-command-line-argument',
+                '-Ofast',
+                '-fPIC',
+                '-pie',
+                '-mtune=skylake',
+                '-flto',
+                '-Wl,-z,noexecstack',
+                '-I', "$jvmHome/include",
+                '-I' // Filled below
+        ]
+
+        // Sad that there isn't a simple way for that
+        // TODO: other unix flavours?
+        def currentOs = new org.gradle.nativeplatform.platform.internal.DefaultNativePlatform("current").operatingSystem // TODO: ugh
+        if (currentOs.macOsX) {
+            baseFlags += "$jvmHome/include/darwin"
+        } else if (currentOs.linux) {
+            baseFlags += "$jvmHome/include/linux"
+        }
+
+        cipher(NativeLibrarySpec) {
+            sources {
+                cpp {
+                    source {
+                        srcDir 'src/main/c'
+                        include '**/NativeCipherImpl.cpp'
+                    }
+                }
+            }
+
+            binaries.withType(StaticLibraryBinarySpec) { binary ->
+                buildable = false
+            }
+
+            binaries.all {
+                baseFlags.each {
+                    cppCompiler.args it
+                }
+
+                linker.args '-lmbedcrypto'
+            }
+        }
+
+        compress(NativeLibrarySpec) {
+            sources {
+                cpp {
+                    source {
+                        srcDir 'src/main/c'
+                        include '**/NativeCompressImpl.cpp'
+                    }
+                }
+            }
+
+            binaries.withType(StaticLibraryBinarySpec) { binary ->
+                buildable = false
+            }
+
+            binaries.all {
+                cppCompiler.args '-I', "$jvmHome/include"
+                cppCompiler.args '-I', "$jvmHome/include/darwin"
+                linker.args '-lz'
+
+                baseFlags.each {
+                    cppCompiler.args it
+                }
+            }
+        }
+    }
+}
+
+test {
+    def libs = [
+            file("${buildDir}/libs/cipher/shared"),
+            file("${buildDir}/libs/compress/shared")
+    ]
+    systemProperty "java.library.path", libs.collect { it.absolutePath }.join(":")
+}
