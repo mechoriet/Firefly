@@ -4,71 +4,28 @@ Date: Tue, 26 Nov 2019 19:51:00 +0200
 Subject: [PATCH] Attempt to make supported protocol id checking faster
 
 
-diff --git a/protocol/src/main/java/net/md_5/bungee/protocol/ProtocolConstants.java b/protocol/src/main/java/net/md_5/bungee/protocol/ProtocolConstants.java
-index cd987c8a8c1b9892efe6033958ec624e246808b3..6bbab1ae1aafcaed5db8237b9de90b6a4cb553d2 100644
---- a/protocol/src/main/java/net/md_5/bungee/protocol/ProtocolConstants.java
-+++ b/protocol/src/main/java/net/md_5/bungee/protocol/ProtocolConstants.java
-@@ -62,6 +62,28 @@ public class ProtocolConstants
-             ProtocolConstants.MINECRAFT_1_15_1,
-             ProtocolConstants.MINECRAFT_1_15_2
-     );
-+    // Firefly start
-+    public static final int LOWEST_SUPPORTED_VERSION_ID;
-+    public static final int HIGHEST_SUPPORTED_VERSION_ID;
-+    private static final boolean[] SUPPORTED_VERSION_IDS_FAST;
-+    static {
-+        LOWEST_SUPPORTED_VERSION_ID = SUPPORTED_VERSION_IDS.get(0);
-+        HIGHEST_SUPPORTED_VERSION_ID = SUPPORTED_VERSION_IDS.get(SUPPORTED_VERSION_IDS.size() - 1);
-+        var arraySize = HIGHEST_SUPPORTED_VERSION_ID - LOWEST_SUPPORTED_VERSION_ID + 1;
-+        SUPPORTED_VERSION_IDS_FAST = new boolean[arraySize];
-+        for (var supportedVersionId : SUPPORTED_VERSION_IDS) {
-+            var index = supportedVersionId - LOWEST_SUPPORTED_VERSION_ID;
-+            SUPPORTED_VERSION_IDS_FAST[index] = true;
-+        }
-+    }
-+
-+    public static boolean isSupportedProtocol(int protocolId) {
-+        var protocolIndex = protocolId - LOWEST_SUPPORTED_VERSION_ID;
-+        return protocolIndex >= 0 &&
-+                protocolIndex < ProtocolConstants.SUPPORTED_VERSION_IDS_FAST.length &&
-+                ProtocolConstants.SUPPORTED_VERSION_IDS_FAST[protocolIndex];
-+    }
-+    // Firefly end
- 
-     public static final boolean isBeforeOrEq(int before, int other)
-     {
-diff --git a/proxy/src/main/java/net/md_5/bungee/BungeeCord.java b/proxy/src/main/java/net/md_5/bungee/BungeeCord.java
-index 7d33478b2e673e74bb287dc335b727a1d47755d8..48d0b8921b7d590d751b740d9e9152bbb34c969b 100644
---- a/proxy/src/main/java/net/md_5/bungee/BungeeCord.java
-+++ b/proxy/src/main/java/net/md_5/bungee/BungeeCord.java
-@@ -809,7 +809,7 @@ public class BungeeCord extends ProxyServer
-     @Override
-     public int getProtocolVersion()
-     {
--        return ProtocolConstants.SUPPORTED_VERSION_IDS.get( ProtocolConstants.SUPPORTED_VERSION_IDS.size() - 1 );
-+        return ProtocolConstants.HIGHEST_SUPPORTED_VERSION_ID; //SUPPORTED_VERSION_IDS.get( ProtocolConstants.SUPPORTED_VERSION_IDS.size() - 1 ); // Firefly
+diff --git a/proxy/src/main/java/net/md_5/bungee/entitymap/EntityMap_1_15.java b/proxy/src/main/java/net/md_5/bungee/entitymap/EntityMap_1_15.java
+index b40a378045c9f7e3a5cef2ee83db3e39e26a0c15..77bea04d61616a246acb2f56c6735ddce9e958cd 100644
+--- a/proxy/src/main/java/net/md_5/bungee/entitymap/EntityMap_1_15.java
++++ b/proxy/src/main/java/net/md_5/bungee/entitymap/EntityMap_1_15.java
+@@ -161,9 +161,9 @@ class EntityMap_1_15 extends EntityMap
      }
  
      @Override
-diff --git a/proxy/src/main/java/net/md_5/bungee/connection/InitialHandler.java b/proxy/src/main/java/net/md_5/bungee/connection/InitialHandler.java
-index 4ffe885ebdd70460f0447dbbfcff30df935997df..466655f5100c5b279cfeaf7d8fd1e0d8b5fc218a 100644
---- a/proxy/src/main/java/net/md_5/bungee/connection/InitialHandler.java
-+++ b/proxy/src/main/java/net/md_5/bungee/connection/InitialHandler.java
-@@ -235,7 +235,7 @@ public class InitialHandler extends PacketHandler implements PendingConnection
- 
-         ServerInfo forced = AbstractReconnectHandler.getForcedHost( this );
-         final String motd = ( forced != null ) ? forced.getMotd() : listener.getMotd();
--        final int protocol = ( ProtocolConstants.SUPPORTED_VERSION_IDS.contains( handshake.getProtocolVersion() ) ) ? handshake.getProtocolVersion() : bungee.getProtocolVersion();
-+        final int protocol = ( ProtocolConstants.isSupportedProtocol(/*SUPPORTED_VERSION_IDS.contains(*/ handshake.getProtocolVersion() ) ) ? handshake.getProtocolVersion() : bungee.getProtocolVersion(); // Firefly
- 
-         Callback<ServerPing> pingBack = new Callback<ServerPing>()
-         {
-@@ -338,7 +338,7 @@ public class InitialHandler extends PacketHandler implements PendingConnection
-                 thisState = State.USERNAME;
-                 ch.setProtocol( Protocol.LOGIN );
- 
--                if ( !ProtocolConstants.SUPPORTED_VERSION_IDS.contains( handshake.getProtocolVersion() ) )
-+                if ( !ProtocolConstants.isSupportedProtocol(handshake.getProtocolVersion())) //.SUPPORTED_VERSION_IDS.contains( handshake.getProtocolVersion() ) ) // Firefly
-                 {
-                     if ( handshake.getProtocolVersion() > bungee.getProtocolVersion() )
-                     {
+-    public void rewriteServerbound(ByteBuf packet, int oldId, int newId, net.md_5.bungee.api.connection.Server server) // Firefly - server specific IP forwarding
++    public void rewriteServerbound(ByteBuf packet, int oldId, int newId, int protocolVersion, net.md_5.bungee.api.connection.Server server)
+     {
+-        super.rewriteServerbound( packet, oldId, newId, server ); // Firefly - server specific IP forwarding
++        super.rewriteServerbound( packet, oldId, newId,server );
+         // Special cases
+         int readerIndex = packet.readerIndex();
+         int packetId = DefinedPacket.readVarInt( packet );
+@@ -178,7 +178,7 @@ class EntityMap_1_15 extends EntityMap
+                 int previous = packet.writerIndex();
+                 packet.readerIndex( readerIndex );
+                 packet.writerIndex( readerIndex + packetIdLength );
+-                DefinedPacket.writeUUID( ( (UserConnection) player ).getPendingConnection().getOfflineId(), packet );
++                DefinedPacket.writeUUID(player.getPendingConnection().getUniqueId(), packet );
+                 packet.writerIndex( previous );
+             }
+         }
